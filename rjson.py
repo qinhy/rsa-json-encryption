@@ -153,15 +153,22 @@ class SimpleRSAChunkEncryptor:
         decrypted_chunks = [self.decrypt_chunk(i) for i in decrypted_chunks]        
         return b''.join(decrypted_chunks).decode('utf-8')
 
-def dump_RSA(data_dict,path,public_pkcs8_key_path):
+def dump_RSAs(data_dict,public_pkcs8_key_path):
     encryptor = SimpleRSAChunkEncryptor(
         PEMFileReader(public_pkcs8_key_path).load_public_pkcs8_key(), None)
-    return Path(path).write_text(encryptor.encrypt_string(json.dumps(data_dict)))
+    return encryptor.encrypt_string(json.dumps(data_dict))
+
+def load_RSAs(encrypted_data,private_pkcs8_key_path):
+    encryptor = SimpleRSAChunkEncryptor(
+        None,
+        PEMFileReader(private_pkcs8_key_path).load_private_pkcs8_key())
+    return json.loads(encryptor.decrypt_string(encrypted_data))
+
+def dump_RSA(data_dict,path,public_pkcs8_key_path):
+    return Path(path).write_text(dump_RSAs(data_dict,public_pkcs8_key_path))
 
 def load_RSA(path,private_pkcs8_key_path):
-    encryptor = SimpleRSAChunkEncryptor(
-        None, PEMFileReader(private_pkcs8_key_path).load_private_pkcs8_key())
-    return json.loads(encryptor.decrypt_string(Path(path).read_text()))
+    return load_RSAs(Path(path).read_text(),private_pkcs8_key_path)
 
 # Example Usage
 def ex1():
