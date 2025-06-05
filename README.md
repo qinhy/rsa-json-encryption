@@ -10,6 +10,7 @@ This library is for educational and experimental use only. **Do not use in produ
 ---
 
 ## 📦 Features
+- Very lite and no extra pip install needed
 - Supports RSA public/private keys in **PKCS#8 PEM** format
 - Chunk-based encryption for large data
 - Manual ASN.1 DER parsing (no heavy dependencies for key parsing)
