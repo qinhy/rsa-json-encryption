@@ -32,16 +32,15 @@ This library is for educational and experimental use only. **Do not use in produ
 - Python 3.7+
 - No pip install needed for this module (just copy `rjson.py`)
 - (pip install git+https://github.com/qinhy/rsa-json-encryption.git) will work too
-- For key generation, install `cryptography`:
-  ```bash
-  pip install cryptography
-  ```
 
 ---
 
 ## 🔑 Key Generation
 Generate RSA keys using Python's `cryptography` library:
-
+For key generation, install `cryptography`:
+ ```bash
+  pip install cryptography
+```
 ```python
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
