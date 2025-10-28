@@ -237,60 +237,67 @@ public:
     {
         key_bytes_ = read_pem_file();
     }
-
-    std::tuple<InfInt, InfInt> load_public_pkcs8_key()
+    
+    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> load_public_pkcs8_key()
     {
-        auto [data, _] = parse_asn1_der_sequence(key_bytes_, 0);
+        auto [data, data_index] = parse_asn1_der_sequence(key_bytes_, 0);
         size_t index = 0;
 
+        // Parse algorithm identifier SEQUENCE (skip it)
         std::tie(std::ignore, index) = parse_asn1_der_sequence(data, index);
 
-        ASN1Element bit_string = parse_asn1_der_element(data, index);
-        if (bit_string.tag != 0x03 || bit_string.value.empty() || bit_string.value.front() != 0x00)
+        // Parse BIT STRING
+        auto [tag, bit_string_length, value, new_index] = parse_asn1_der_element(data, index);
+        if (tag != 0x03 || value[0] != 0x00)
         {
             throw std::runtime_error("Expected BIT STRING");
         }
+        std::vector<uint8_t> public_key_bytes(value.begin() + 1, value.end());
 
-        std::vector<uint8_t> public_key_bytes(bit_string.value.begin() + 1, bit_string.value.end());
-
-        auto [rsa_key_data, __] = parse_asn1_der_sequence(public_key_bytes, 0);
+        // Parse RSAPublicKey SEQUENCE
+        auto [rsa_key_data, rsa_key_data_index] = parse_asn1_der_sequence(public_key_bytes, 0);
         index = 0;
 
-        std::vector<uint8_t> n_bytes;
-        std::vector<uint8_t> e_bytes;
-        std::tie(n_bytes, index) = parse_asn1_der_integer(rsa_key_data, index);
-        std::tie(e_bytes, index) = parse_asn1_der_integer(rsa_key_data, index);
+        // Parse modulus (n) and exponent (e)
+        std::vector<uint8_t> n, e;
+        std::tie(n, index) = parse_asn1_der_integer(rsa_key_data, index);
+        std::tie(e, index) = parse_asn1_der_integer(rsa_key_data, index);
 
-        return std::make_tuple(bytes_to_int(e_bytes), bytes_to_int(n_bytes));
+        return std::make_tuple(e, n);
     }
 
-    std::tuple<InfInt, InfInt> load_private_pkcs8_key()
+    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> load_private_pkcs8_key()
     {
-        auto [data, _] = parse_asn1_der_sequence(key_bytes_, 0);
+        auto [data, data_index] = parse_asn1_der_sequence(key_bytes_, 0);
         size_t index = 0;
 
+        // Parse version INTEGER (skip it)
         std::tie(std::ignore, index) = parse_asn1_der_integer(data, index);
+
+        // Parse algorithm identifier SEQUENCE (skip it)
         std::tie(std::ignore, index) = parse_asn1_der_sequence(data, index);
 
-        ASN1Element private_key_octet = parse_asn1_der_element(data, index);
-        if (private_key_octet.tag != 0x04)
+        // Parse privateKey OCTET STRING
+        auto [tag, octet_length, private_key_bytes, new_index] = parse_asn1_der_element(data, index);
+        if (tag != 0x04)
         {
             throw std::runtime_error("Expected OCTET STRING");
         }
 
-        auto [rsa_key_data, __] = parse_asn1_der_sequence(private_key_octet.value, 0);
+        // Parse RSAPrivateKey SEQUENCE
+        auto [rsa_key_data, rsa_key_data_index] = parse_asn1_der_sequence(private_key_bytes, 0);
         index = 0;
 
+        // Parse version INTEGER (skip it)
         std::tie(std::ignore, index) = parse_asn1_der_integer(rsa_key_data, index);
 
-        std::vector<uint8_t> n_bytes;
-        std::vector<uint8_t> e_bytes;
-        std::vector<uint8_t> d_bytes;
-        std::tie(n_bytes, index) = parse_asn1_der_integer(rsa_key_data, index);
-        std::tie(e_bytes, index) = parse_asn1_der_integer(rsa_key_data, index);
-        std::tie(d_bytes, index) = parse_asn1_der_integer(rsa_key_data, index);
+        // Parse modulus (n), publicExponent (e), and privateExponent (d)
+        std::vector<uint8_t> n, e, d;
+        std::tie(n, index) = parse_asn1_der_integer(rsa_key_data, index);
+        std::tie(e, index) = parse_asn1_der_integer(rsa_key_data, index);
+        std::tie(d, index) = parse_asn1_der_integer(rsa_key_data, index);
 
-        return std::make_tuple(bytes_to_int(d_bytes), bytes_to_int(n_bytes));
+        return std::make_tuple(d, n);
     }
 
 private:
@@ -305,8 +312,7 @@ private:
             throw std::runtime_error("Cannot open PEM file: " + file_path_);
         }
 
-        std::string line;
-        std::string key_data;
+        std::string line, key_data;
         while (std::getline(file, line))
         {
             if (line.find("BEGIN") == std::string::npos && line.find("END") == std::string::npos)
@@ -317,107 +323,79 @@ private:
         return base64::decode(key_data);
     }
 
-    ASN1Element parse_asn1_der_element(const std::vector<uint8_t> &data, size_t index)
+    std::tuple<uint8_t, size_t, std::vector<uint8_t>, size_t> parse_asn1_der_element(const std::vector<uint8_t> &data, size_t index)
     {
-        if (index >= data.size())
-        {
-            throw std::runtime_error("Unexpected end of ASN.1 data");
-        }
-
-        ASN1Element element;
-        element.tag = data[index++];
-
-        if (index >= data.size())
-        {
-            throw std::runtime_error("Unexpected end of ASN.1 data while reading length");
-        }
-
+        uint8_t tag = data[index++];
         uint8_t length_byte = data[index++];
-        if ((length_byte & 0x80u) == 0)
+
+        size_t length;
+        if ((length_byte & 0x80) == 0)
         {
-            element.length = length_byte & 0x7Fu;
+            length = length_byte & 0x7F;
         }
         else
         {
-            size_t num_length_bytes = length_byte & 0x7Fu;
-            if (index + num_length_bytes > data.size())
-            {
-                throw std::runtime_error("Invalid ASN.1 length encoding");
-            }
-
-            element.length = 0;
+            size_t num_length_bytes = length_byte & 0x7F;
+            length = 0;
             for (size_t i = 0; i < num_length_bytes; ++i)
             {
-                element.length = (element.length << 8) | data[index++];
+                length = (length << 8) | data[index++];
             }
         }
 
-        if (index + element.length > data.size())
-        {
-            throw std::runtime_error("ASN.1 element length exceeds buffer");
-        }
+        std::vector<uint8_t> value(data.begin() + index, data.begin() + index + length);
+        index += length;
 
-        element.value.assign(data.begin() + index, data.begin() + index + element.length);
-        element.next_index = index + element.length;
-        return element;
+        return {tag, length, value, index};
     }
 
-    std::tuple<std::vector<uint8_t>, size_t> parse_asn1_der_integer(const std::vector<uint8_t> &data, size_t index)
-    {
-        ASN1Element element = parse_asn1_der_element(data, index);
-        if (element.tag != 0x02)
-        {
-            throw std::runtime_error("Expected ASN.1 INTEGER");
+
+    std::tuple<std::vector<uint8_t>, size_t> parse_asn1_der_integer(const std::vector<uint8_t>& data, size_t index) {
+        auto [tag, _, value, new_index] = parse_asn1_der_element(data, index);
+        if (tag != 0x02) {
+            throw std::runtime_error("Expected INTEGER");
         }
-        return std::make_tuple(element.value, element.next_index);
+        return {value, new_index};
     }
 
     std::tuple<std::vector<uint8_t>, size_t> parse_asn1_der_sequence(const std::vector<uint8_t> &data, size_t index)
     {
-        ASN1Element element = parse_asn1_der_element(data, index);
-        if (element.tag != 0x30)
-        {
-            throw std::runtime_error("Expected ASN.1 SEQUENCE");
-        }
-        return std::make_tuple(element.value, element.next_index);
+        auto [tag, length, value, new_index] = parse_asn1_der_element(data, index);
+        if (tag != 0x30)
+            throw std::runtime_error("Expected SEQUENCE");
+
+        return {value, new_index};
     }
 };
 
 class SimpleRSAChunkEncryptor
 {
 public:
-    SimpleRSAChunkEncryptor(std::optional<std::tuple<InfInt, InfInt>> public_key = std::nullopt,
-                            std::optional<std::tuple<InfInt, InfInt>> private_key = std::nullopt)
-        : public_key_(std::move(public_key)),
-          private_key_(std::move(private_key))
+    SimpleRSAChunkEncryptor(
+        std::optional<std::tuple<std::vector<uint8_t>, std::vector<uint8_t>>> public_key,
+        std::optional<std::tuple<std::vector<uint8_t>, std::vector<uint8_t>>> private_key = std::nullopt)
     {
-        const InfInt *modulus = nullptr;
-        if (public_key_)
-        {
-            modulus = &std::get<1>(*public_key_);
+        if (public_key) {
+            const auto& [e_bytes, n_bytes] = *public_key;
+            public_key_.emplace(bytes_to_int(e_bytes), bytes_to_int(n_bytes));
         }
-        else if (private_key_)
-        {
-            modulus = &std::get<1>(*private_key_);
+        if (private_key) {
+            const auto& [d_bytes, n_bytes] = *private_key;
+            private_key_.emplace(bytes_to_int(d_bytes), bytes_to_int(n_bytes));
         }
 
-        if (modulus)
-        {
+        const InfInt* modulus = nullptr;
+        if (public_key_)      modulus = &std::get<1>(*public_key_);
+        else if (private_key_) modulus = &std::get<1>(*private_key_);
+
+        if (modulus) {
             modulus_bytes_ = (bit_length(*modulus) + 7) / 8;
         }
 
-        if (public_key_)
-        {
-            if (modulus_bytes_ == 0)
-            {
-                throw std::runtime_error("Invalid RSA modulus");
-            }
-
-            if (modulus_bytes_ <= 1)
-            {
-                throw std::runtime_error("The modulus 'n' is too small. Please use a larger key size.");
-            }
-            data_chunk_bytes_ = modulus_bytes_ - 1;
+        if (public_key_) {
+            if (modulus_bytes_ == 0) throw std::runtime_error("Invalid RSA modulus");
+            if (modulus_bytes_ <= 1) throw std::runtime_error("Modulus too small");
+            data_chunk_bytes_ = modulus_bytes_ - 1; // room for 0x01 prefix
         }
     }
 

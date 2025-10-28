@@ -163,3 +163,5 @@ cython_debug/
 ts/.pnp.cjs
 ts/.pnp.loader.mjs
 tmp/encrypted_data.rjson
+.python-version
+uv.lock

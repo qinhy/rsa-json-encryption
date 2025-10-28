@@ -282,8 +282,8 @@ def ex2():
 
 def ex3():
     # Load keys from .pem files
-    public_key_path = 'public_key.pem'
-    private_key_path = 'private_key.pem'
+    public_key_path = './tmp/public_key.pem'
+    private_key_path = './tmp/private_key.pem'
 
     public_key = PEMFileReader(
                     public_key_path).load_public_pkcs8_key()
@@ -306,4 +306,4 @@ def ex3():
     print(f"\nDecrypted Text:[{decrypted_text}]")
 
 
-
+ex3()
