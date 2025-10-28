@@ -34,5 +34,15 @@ int main()
         return 1;
     }
 
+    using nlohmann::json;
+    try {
+        std::string plain = R"({"msg":"hello","n":123})";
+        std::string enc = rjson::dump_rJSONs(plain, public_key_path, /*compress=*/true);
+        std::string dec = rjson::load_rJSONs(enc, private_key_path);
+        std::cout << dec << std::endl; // should print the JSON
+    } catch (const std::exception& ex) {
+        std::cerr << "ERR: " << ex.what() << std::endl;
+    }
+
     return 0;
 }

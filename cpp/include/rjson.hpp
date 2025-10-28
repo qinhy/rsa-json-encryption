@@ -1,6 +1,7 @@
 #include "InfInt.h"
 #include "base64.hpp"
 #include "json.hpp"
+#include "zstr.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +16,56 @@
 #include <tuple>
 #include <vector>
 
-#include <zlib.h>
 
 namespace rjson
 {
 namespace
 {
+    
+    // zlib "wrapper" (not gzip, not raw)
+    constexpr int kZlibWindowBits = 15;
+
+    inline std::vector<uint8_t> compress_zlib(const std::vector<uint8_t>& input)
+    {
+        std::stringstream sink;
+
+        // zstr::ostream( std::ostream&, std::size_t buffer, int level, int window_bits )
+        {
+            zstr::ostream zouts(sink, /*buffer*/ 1 << 15, /*level*/ Z_BEST_COMPRESSION, /*window_bits*/ kZlibWindowBits);
+            if (!input.empty()) {
+                zouts.write(reinterpret_cast<const char*>(input.data()),
+                            static_cast<std::streamsize>(input.size()));
+            }
+            // zouts dtor flushes/finishes
+        }
+
+        const std::string out = sink.str();
+        return std::vector<uint8_t>(out.begin(), out.end());
+    }
+
+    inline std::vector<uint8_t> decompress_zlib(const std::vector<uint8_t>& input)
+    {
+        if (input.empty()) return {};
+
+        std::string compressed(reinterpret_cast<const char*>(input.data()),
+                            static_cast<std::size_t>(input.size()));
+        std::stringstream source(compressed);
+
+        // zstr::istream( std::istream&, std::size_t buffer, bool throw_on_error, int window_bits )
+        zstr::istream zins(source, /*buffer*/ 1 << 15, /*throw_on_error*/ true, /*window_bits*/ kZlibWindowBits);
+
+        std::vector<uint8_t> output;
+        std::array<char, 4096> buf{};
+        while (true) {
+            zins.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+            std::streamsize got = zins.gcount();
+            if (got > 0) output.insert(output.end(), buf.data(), buf.data() + got);
+            if (zins.eof()) break;
+            if (!zins.good()) throw std::runtime_error("zlib decompression failed");
+        }
+        return output;
+    }
+
     InfInt bytes_to_int(const std::vector<uint8_t> &bytes)
     {
         InfInt result = 0;
@@ -34,15 +79,29 @@ namespace
 
     std::vector<uint8_t> int_to_bytes(const InfInt &value, size_t min_size = 0)
     {
+        // Use library first, then normalize endianness by detection.
         std::vector<uint8_t> bytes = value.to_bytes();
-        if (bytes.size() < min_size)
-        {
-            std::vector<uint8_t> padded(min_size - bytes.size(), 0);
-            padded.insert(padded.end(), bytes.begin(), bytes.end());
-            return padded;
+
+        // Detect library endianness once using 0x01_02_03
+        static const bool lib_is_be = [](){
+            InfInt test = 0;
+            test = 1;        // 0x01
+            test *= 256; test += 2; // 0x0102
+            test *= 256; test += 3; // 0x010203
+            std::vector<uint8_t> b = test.to_bytes();
+            return (b.size() >= 3 && b[0]==0x01 && b[1]==0x02 && b[2]==0x03);
+        }();
+
+        if (!lib_is_be) {
+            std::reverse(bytes.begin(), bytes.end());
+        }
+
+        if (bytes.size() < min_size) {
+            bytes.insert(bytes.begin(), min_size - bytes.size(), 0);
         }
         return bytes;
     }
+
 
     size_t bit_length(const InfInt &value)
     {
@@ -163,63 +222,6 @@ namespace
         return true;
     }
 
-    std::vector<uint8_t> compress_zlib(const std::vector<uint8_t> &input)
-    {
-        uLong source_len = static_cast<uLong>(input.size());
-        uLong dest_len = compressBound(source_len);
-        std::vector<uint8_t> output(dest_len);
-
-        int status = compress2(output.data(), &dest_len, input.data(), source_len, Z_BEST_COMPRESSION);
-        if (status != Z_OK)
-        {
-            throw std::runtime_error("zlib compression failed");
-        }
-
-        output.resize(dest_len);
-        return output;
-    }
-
-    std::vector<uint8_t> decompress_zlib(const std::vector<uint8_t> &input)
-    {
-        if (input.empty())
-        {
-            return {};
-        }
-
-        z_stream stream{};
-        stream.next_in = const_cast<Bytef *>(reinterpret_cast<const Bytef *>(input.data()));
-        stream.avail_in = static_cast<uInt>(input.size());
-
-        if (inflateInit(&stream) != Z_OK)
-        {
-            throw std::runtime_error("Failed to initialise zlib inflate");
-        }
-
-        std::vector<uint8_t> output;
-        output.reserve(input.size() * 2);
-
-        const size_t chunk_size = 4096;
-        int ret = Z_OK;
-        do
-        {
-            size_t previous_size = output.size();
-            output.resize(previous_size + chunk_size);
-            stream.next_out = output.data() + previous_size;
-            stream.avail_out = static_cast<uInt>(chunk_size);
-
-            ret = inflate(&stream, Z_NO_FLUSH);
-            if (ret == Z_STREAM_ERROR || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR)
-            {
-                inflateEnd(&stream);
-                throw std::runtime_error("zlib decompression failed");
-            }
-
-            output.resize(previous_size + (chunk_size - stream.avail_out));
-        } while (ret != Z_STREAM_END);
-
-        inflateEnd(&stream);
-        return output;
-    }
 } // namespace
 
 struct ASN1Element
@@ -306,48 +308,57 @@ private:
 
     std::vector<uint8_t> read_pem_file()
     {
-        std::ifstream file(file_path_);
-        if (!file)
-        {
+        std::ifstream file(file_path_, std::ios::in);
+        if (!file) {
             throw std::runtime_error("Cannot open PEM file: " + file_path_);
         }
 
         std::string line, key_data;
-        while (std::getline(file, line))
-        {
-            if (line.find("BEGIN") == std::string::npos && line.find("END") == std::string::npos)
-            {
-                key_data += line;
-            }
+        while (std::getline(file, line)) {
+            // remove CR and spaces/tabs that some PEM writers add
+            line.erase(std::remove_if(line.begin(), line.end(),
+                    [](unsigned char ch){ return ch=='\r' || ch==' ' || ch=='\t'; }),
+                    line.end());
+            if (line.empty()) continue;
+            if (line.find("BEGIN") != std::string::npos) continue;
+            if (line.find("END")   != std::string::npos) continue;
+            key_data += line;
         }
+        // Just in case, purge any leftover whitespace
+        key_data.erase(std::remove_if(key_data.begin(), key_data.end(),
+                    [](unsigned char c){ return std::isspace(c); }), key_data.end());
         return base64::decode(key_data);
     }
 
-    std::tuple<uint8_t, size_t, std::vector<uint8_t>, size_t> parse_asn1_der_element(const std::vector<uint8_t> &data, size_t index)
+
+    std::tuple<uint8_t, size_t, std::vector<uint8_t>, size_t>
+    parse_asn1_der_element(const std::vector<uint8_t>& data, size_t index)
     {
+        if (index >= data.size()) throw std::runtime_error("ASN.1: out of data (tag)");
         uint8_t tag = data[index++];
+
+        if (index >= data.size()) throw std::runtime_error("ASN.1: out of data (length)");
         uint8_t length_byte = data[index++];
 
-        size_t length;
-        if ((length_byte & 0x80) == 0)
-        {
-            length = length_byte & 0x7F;
-        }
-        else
-        {
-            size_t num_length_bytes = length_byte & 0x7F;
-            length = 0;
-            for (size_t i = 0; i < num_length_bytes; ++i)
-            {
+        size_t length = 0;
+        if ((length_byte & 0x80u) == 0u) {
+            length = length_byte & 0x7Fu;
+        } else {
+            size_t num_length_bytes = length_byte & 0x7Fu;
+            if (num_length_bytes == 0) throw std::runtime_error("ASN.1: indefinite length not supported");
+            if (index + num_length_bytes > data.size()) throw std::runtime_error("ASN.1: length OOB");
+            for (size_t i = 0; i < num_length_bytes; ++i) {
                 length = (length << 8) | data[index++];
             }
         }
 
+        if (index + length > data.size()) throw std::runtime_error("ASN.1: value OOB");
         std::vector<uint8_t> value(data.begin() + index, data.begin() + index + length);
         index += length;
 
         return {tag, length, value, index};
     }
+
 
 
     std::tuple<std::vector<uint8_t>, size_t> parse_asn1_der_integer(const std::vector<uint8_t>& data, size_t index) {
