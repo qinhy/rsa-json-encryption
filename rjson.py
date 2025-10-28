@@ -123,11 +123,9 @@ class SimpleRSAChunkEncryptor:
             raise ValueError("Public key required for encryption.")
         
         # Step 1: Compress or encode the plaintext
-        if compress:
-            data = zlib.compress(plaintext.encode('utf-8'))
-        else:
-            data = plaintext.encode('utf-8')
-        
+        data = plaintext.encode('utf-8')
+        if compress: data = zlib.compress(data)        
+
         chunk_size = self.chunk_size - 1
 
         # Step 2: Split the data into chunks
@@ -304,3 +302,4 @@ def ex3():
     # Decrypt the encrypted text
     decrypted_text = encryptor.decrypt_string(encrypted_text)
     print(f"\nDecrypted Text:[{decrypted_text}]")
+    
