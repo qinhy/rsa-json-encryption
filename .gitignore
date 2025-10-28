@@ -166,3 +166,4 @@ tmp/encrypted_data.rjson
 .python-version
 uv.lock
 rust/Cargo.lock
+*.jar
