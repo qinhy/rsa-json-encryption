@@ -304,6 +304,3 @@ def ex3():
     # Decrypt the encrypted text
     decrypted_text = encryptor.decrypt_string(encrypted_text)
     print(f"\nDecrypted Text:[{decrypted_text}]")
-
-
-ex3()

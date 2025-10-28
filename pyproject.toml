@@ -1,9 +1,9 @@
 [project]
-name = "rsa-json-encryption",
-version = "0.1.0",
-author = "qinhy",
-description = "RSA JSON Encryption with PEM Key Support",
-url = "https://github.com/qinhy/rsa-json-encryption",
-license = "MIT",
-python_requires = ">=3.7",
+name = "rsa-json-encryption"
+version = "0.1.0"
+author = "qinhy"
+description = "RSA JSON Encryption with PEM Key Support"
+url = "https://github.com/qinhy/rsa-json-encryption"
+license = "MIT"
+python_requires = ">=3.7"
 dependencies = []
