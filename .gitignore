@@ -167,3 +167,4 @@ tmp/encrypted_data.rjson
 uv.lock
 rust/Cargo.lock
 *.jar
+restored_image.png

@@ -303,3 +303,35 @@ def ex3():
     decrypted_text = encryptor.decrypt_string(encrypted_text)
     print(f"\nDecrypted Text:[{decrypted_text}]")
     
+def ex4():
+    # Load keys from .pem files
+    public_key_path = './tmp/public_key.pem'
+    private_key_path = './tmp/private_key.pem'
+
+    public_key = PEMFileReader(
+                    public_key_path).load_public_pkcs8_key()
+    private_key = PEMFileReader(
+                    private_key_path).load_private_pkcs8_key()
+
+    image_path = "./tmp/test.png"
+    restored_image_path = "./restored_image.png"
+
+    with open(image_path, "rb") as f: img_bytes = f.read()
+
+    img_b64 = base64.b64encode(img_bytes).decode("ascii")
+    print(f"Original image bytes: {len(img_bytes)}")
+    print(f"Base64 text length  : {len(img_b64)}")
+
+    encryptor = SimpleRSAChunkEncryptor(
+        public_key=public_key,private_key=private_key)
+
+    encrypted_text = encryptor.encrypt_string(img_b64, compress=True)
+    print(f"Encrypted text length (chars): {len(encrypted_text)}")
+
+    decrypted_b64 = encryptor.decrypt_string(encrypted_text)
+    print(f"Decrypted Base64 length       : {len(decrypted_b64)}")
+
+    restored_bytes = base64.b64decode(decrypted_b64.encode("ascii"))
+
+    with open(restored_image_path, "wb") as f: f.write(restored_bytes)
+    print(f"Restored image written to: {restored_image_path}")
